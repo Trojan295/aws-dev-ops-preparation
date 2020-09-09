@@ -1,0 +1,9 @@
+version = 0.1
+[default]
+[default.deploy]
+[default.deploy.parameters]
+stack_name = "notes-backend"
+s3_bucket = "aws-sam-cli-managed-default-samclisourcebucket-1q2jg14d0sl1g"
+s3_prefix = "notes-backend"
+region = "eu-west-1"
+capabilities = "CAPABILITY_IAM"

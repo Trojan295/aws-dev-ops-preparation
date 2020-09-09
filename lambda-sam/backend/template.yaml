@@ -1,0 +1,179 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  notes
+  
+  Sample SAM Template for notes
+
+Globals:
+  Function:
+    Timeout: 30
+
+Parameters: 
+  ApiName:
+    Type: String
+    Default: notes-backend
+  DynamoDBTableName:
+    Type: String
+    Default: Notes
+
+Resources:
+  NotesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      AttributeDefinitions:
+        - AttributeName: NoteID
+          AttributeType: S
+      BillingMode: PAY_PER_REQUEST 
+      KeySchema:
+        - AttributeName: NoteID
+          KeyType: HASH
+      TableName: !Ref DynamoDBTableName
+
+  NotesApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: !Ref ApiName
+      StageName: Prod
+      TracingEnabled: true
+      Cors: "'*'"
+
+  NotesApiServerErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: NotesApiServerErrorAlarm
+      EvaluationPeriods: 1
+      Metrics:
+      - Id: m1
+        MetricStat:
+          Metric:
+            Dimensions:
+              - Name: ApiName
+                Value: !Ref ApiName
+            MetricName: 5XXError
+            Namespace: AWS/ApiGateway
+          Period: !!int 60
+          Stat: Average
+      ComparisonOperator: GreaterThanThreshold
+      Threshold: 0.05
+      TreatMissingData: notBreaching
+
+  AddNote:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: notes/handlers/addNote
+      Handler: main
+      Runtime: go1.x
+      Tracing: Active
+      Events:
+        CatchAll:
+          Type: Api
+          Properties:
+            RestApiId: !Ref NotesApi
+            Path: /notes
+            Method: POST
+      AutoPublishAlias: live
+      DeploymentPreference:
+        Type: Canary10Percent5Minutes
+        Hooks:
+          PostTraffic: !Ref ValidateAPI
+      Environment:
+        Variables:
+          DYNAMODB_TABLE: !Ref NotesTable
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref NotesTable
+
+  GetNotes:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: notes/handlers/getNotes
+      Handler: main
+      Runtime: go1.x
+      Tracing: Active
+      Events:
+        CatchAll:
+          Type: Api
+          Properties:
+            RestApiId: !Ref NotesApi
+            Path: /notes
+            Method: GET
+      AutoPublishAlias: live
+      DeploymentPreference:
+        Type: Canary10Percent5Minutes
+        Alarms:
+          - !Ref NotesApiServerErrorAlarm
+        Hooks:
+          PostTraffic: !Ref ValidateAPI
+      Environment:
+        Variables:
+          DYNAMODB_TABLE: !Ref NotesTable
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref NotesTable
+
+  RemoveNote:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: notes/handlers/removeNote
+      Handler: main
+      Runtime: go1.x
+      Tracing: Active
+      Events:
+        CatchAll:
+          Type: Api
+          Properties:
+            RestApiId: !Ref NotesApi
+            Path: /notes/{NoteID}
+            Method: DELETE
+      AutoPublishAlias: live
+      DeploymentPreference:
+        Type: Canary10Percent5Minutes
+        Hooks:
+          PostTraffic: !Ref ValidateAPI
+      Environment:
+        Variables:
+          DYNAMODB_TABLE: !Ref NotesTable
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref NotesTable
+
+  ValidateAPI:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: CodeDeployHook_ValidateAPI
+      CodeUri: notes/handlers/validateApi
+      Handler: main
+      Runtime: go1.x
+      Tracing: Active
+      DeploymentPreference:
+        Enabled: False
+      Policies:
+        - CloudFormationDescribeStacksPolicy: {}
+        - Version: '2012-10-17' 
+          Statement:
+            - Effect: Allow
+              Action:
+                - codedeploy:PutLifecycleEventHookExecutionStatus 
+              Resource:
+                !Sub 'arn:aws:codedeploy:${AWS::Region}:${AWS::AccountId}:deploymentgroup:${ServerlessDeploymentApplication}/*'
+      Environment:
+        Variables:
+          CLOUDFORMATION_STACK_NAME: !Ref "AWS::StackName"
+
+  FrontendApp:
+    Type: AWS::Amplify::App
+    Properties: 
+      Name: NotesFrontend
+      EnvironmentVariables:
+        - Name: VUE_APP_API_BASE_URL
+          Value:
+            !Sub "https://${NotesApi}.execute-api.${AWS::Region}.amazonaws.com/Prod"
+
+Outputs:
+  NotesAPI:
+    Description: "API Gateway endpoint URL for Prod environment"
+    Value: !Sub "https://${NotesApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/"
+  FrontendDomain:
+    Description: "Default domain of the Amplify frontend app"
+    Value: !GetAtt FrontendApp.DefaultDomain

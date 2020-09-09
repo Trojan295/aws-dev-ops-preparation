@@ -1,0 +1,146 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VpcId of your existing Virtual Private Cloud (VPC)
+    ConstraintDescription: must be the VPC Id of an existing Virtual Private Cloud.
+  Subnets:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: The list of SubnetIds in your Virtual Private Cloud (VPC)
+    ConstraintDescription: must be a list of at least two existing subnets associated
+      with at least two different availability zones. They should be residing in the
+      selected Virtual Private Cloud.
+
+  InstanceType:
+    Description: WebServer EC2 instance type
+    Type: String
+    Default: t3a.micro
+  LatestAmiId:
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2'
+
+Resources:
+  S3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: dczaja-ec2-webpage-bucket
+
+  WebServerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable HTTP access on the configured port
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: '80'
+        ToPort: '80'
+        SourceSecurityGroupId: !Ref ALBSecurityGroup
+      VpcId:
+        Ref: VpcId
+  WebServerInstanceProfile: 
+    Type: "AWS::IAM::InstanceProfile"
+    Properties: 
+      Path: "/"
+      Roles: 
+        - "EC2RoleForCodeDeploy"
+  WebServerLaunchConfig:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Properties:
+      ImageId: !Ref LatestAmiId
+      SecurityGroups:
+      - !Ref WebServerSecurityGroup 
+      InstanceType: !Ref InstanceType
+      IamInstanceProfile: !Ref WebServerInstanceProfile
+  WebServerGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    UpdatePolicy:
+      AutoScalingRollingUpdate:
+        MaxBatchSize: '1'
+        MinInstancesInService: '1'
+        PauseTime: PT15M
+    Properties:
+      VPCZoneIdentifier:
+        Ref: Subnets
+      LaunchConfigurationName:
+        Ref: WebServerLaunchConfig
+      Tags:
+        - Key: Application
+          Value: ec2-deploy-app
+          PropagateAtLaunch: true
+      MinSize: '2'
+      MaxSize: '4'
+      TargetGroupARNs:
+      - Ref: ALBTargetGroup
+
+  CodeDeployAssociation:
+    Type: AWS::SSM::Association
+    Properties:
+      Name: AWS-ConfigureAWSPackage
+      Targets:
+        - Key: tag:Application
+          Values: [ec2-deploy-app]
+      Parameters:
+        action: [Install]
+        name: [AWSCodeDeployAgent]
+
+  WebServerAssociation:
+    Type: AWS::SSM::Association
+    Properties:
+      Name: AWS-RunShellScript
+      Targets:
+        - Key: tag:Application
+          Values: [ec2-deploy-app]
+      Parameters:
+        commands:
+          - yum install -y httpd
+          - systemctl enable httpd
+          - systemctl start httpd
+
+  ALBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable HTTP access on the configured port
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: '80'
+        ToPort: '80'
+        CidrIp: 0.0.0.0/0
+      VpcId:
+        Ref: VpcId
+  ApplicationLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      SecurityGroups:
+        - !Ref ALBSecurityGroup
+      Subnets:
+        Ref: Subnets
+  ALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+      - Type: forward
+        TargetGroupArn:
+          Ref: ALBTargetGroup
+      LoadBalancerArn:
+        Ref: ApplicationLoadBalancer
+      Port: '80'
+      Protocol: HTTP
+  ALBTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 3
+      HealthCheckPath: /index.html/
+      Port: 80
+      Protocol: HTTP
+      UnhealthyThresholdCount: 5
+      TargetGroupAttributes:
+        - Key: deregistration_delay.timeout_seconds
+          Value: 10
+      VpcId:
+        Ref: VpcId
+
+Outputs:
+  URL:
+    Description: URL of the website
+    Value: !Sub "http://${ApplicationLoadBalancer.DNSName}"

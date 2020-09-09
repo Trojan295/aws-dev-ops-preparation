@@ -1,0 +1,5 @@
+version: 0.0
+os: linux
+files:
+  - source: webpage/index.html
+    destination: /var/www/html/index.html
