@@ -25,6 +25,7 @@ Resources:
     Properties:
       BucketName: dczaja-ec2-webpage-bucket
 
+  # ASG
   WebServerSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
@@ -36,12 +37,28 @@ Resources:
         SourceSecurityGroupId: !Ref ALBSecurityGroup
       VpcId:
         Ref: VpcId
+  WebServerEC2Role:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+              - ec2.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Path: /
+      ManagedPolicyArns:
+        - "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+        - "arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess"
   WebServerInstanceProfile: 
     Type: "AWS::IAM::InstanceProfile"
     Properties: 
       Path: "/"
       Roles: 
-        - "EC2RoleForCodeDeploy"
+        - !Ref WebServerEC2Role
   WebServerLaunchConfig:
     Type: AWS::AutoScaling::LaunchConfiguration
     Properties:
@@ -71,6 +88,7 @@ Resources:
       TargetGroupARNs:
       - Ref: ALBTargetGroup
 
+  # SSM
   CodeDeployAssociation:
     Type: AWS::SSM::Association
     Properties:
@@ -81,7 +99,6 @@ Resources:
       Parameters:
         action: [Install]
         name: [AWSCodeDeployAgent]
-
   WebServerAssociation:
     Type: AWS::SSM::Association
     Properties:
@@ -95,6 +112,7 @@ Resources:
           - systemctl enable httpd
           - systemctl start httpd
 
+  # ALB
   ALBSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
@@ -140,7 +158,55 @@ Resources:
       VpcId:
         Ref: VpcId
 
+  # CodeDeploy
+  CodeDeployApplication:
+    Type: AWS::CodeDeploy::Application
+    Properties:
+      ApplicationName: !Sub "${AWS::StackName}-app"
+      ComputePlatform: Server
+  CodeDeployRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+              - codedeploy.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Path: /
+      ManagedPolicyArns:
+        - "arn:aws:iam::aws:policy/service-role/AWSCodeDeployRole"
+  DeploymentGroup: 
+    Type: AWS::CodeDeploy::DeploymentGroup
+    Properties: 
+      ApplicationName: !Ref CodeDeployApplication
+      DeploymentGroupName: Instances
+      AutoScalingGroups: 
+        - !Ref WebServerGroup
+      ServiceRoleArn: !GetAtt CodeDeployRole.Arn
+      DeploymentConfigName: CodeDeployDefault.OneAtATime
+      AutoRollbackConfiguration:
+        Enabled: true
+        Events:
+          - DEPLOYMENT_FAILURE
+          - DEPLOYMENT_STOP_ON_ALARM
+          - DEPLOYMENT_STOP_ON_REQUEST
+      DeploymentStyle:
+        DeploymentOption: WITH_TRAFFIC_CONTROL
+      LoadBalancerInfo:
+        TargetGroupInfoList:
+          - Name: !GetAtt ALBTargetGroup.TargetGroupName
+
 Outputs:
+  CodeDeployApplicationName:
+    Value: !Ref CodeDeployApplication
   URL:
     Description: URL of the website
     Value: !Sub "http://${ApplicationLoadBalancer.DNSName}"
+  RevisionBucketName:
+    Value: !Ref S3Bucket
+  DeploymentGroupName:
+    Value: !Ref DeploymentGroup

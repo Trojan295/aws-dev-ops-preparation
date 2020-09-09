@@ -4,5 +4,5 @@ This repository stores the materials and code I created to prepare for the AWS D
 
 ## Content
 
-- [EC2 CodeDeploy](ec2-code-deploy) - SSM State Manager and CodeDeploy to deploy code to EC2 instances
+- [EC2 CodeDeploy](ec2-code-deploy) - using SSM State Manager and CodeDeploy to deploy code to EC2 instances
 - [Lambda Serverless Application Model](lambda-sam) - example application deployed using AWS SAM and Amplify. Shows how to trigger  CodeDeploy rollbacks based on CloudWatch alerts and CodeDeploy lifecycle hooks 
