@@ -59,34 +59,40 @@ Resources:
       Path: "/"
       Roles: 
         - !Ref WebServerEC2Role
-  WebServerLaunchConfig:
-    Type: AWS::AutoScaling::LaunchConfiguration
+  WebServerLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
     Properties:
-      ImageId: !Ref LatestAmiId
-      SecurityGroups:
-      - !Ref WebServerSecurityGroup 
-      InstanceType: !Ref InstanceType
-      IamInstanceProfile: !Ref WebServerInstanceProfile
+      LaunchTemplateName: !Sub "${AWS::StackName}-WebServer-template"
+      LaunchTemplateData:
+        InstanceType: !Ref InstanceType
+        ImageId: !Ref LatestAmiId
+        IamInstanceProfile:
+          Name: !Ref WebServerInstanceProfile
+        SecurityGroupIds:
+          - !Ref WebServerSecurityGroup 
   WebServerGroup:
     Type: AWS::AutoScaling::AutoScalingGroup
     UpdatePolicy:
       AutoScalingRollingUpdate:
         MaxBatchSize: '1'
         MinInstancesInService: '1'
-        PauseTime: PT15M
+        PauseTime: PT1M
     Properties:
       VPCZoneIdentifier:
         Ref: Subnets
-      LaunchConfigurationName:
-        Ref: WebServerLaunchConfig
+      LaunchTemplate:
+        LaunchTemplateId: !Ref WebServerLaunchTemplate
+        Version: !GetAtt WebServerLaunchTemplate.LatestVersionNumber
       Tags:
         - Key: Application
           Value: ec2-deploy-app
           PropagateAtLaunch: true
       MinSize: '2'
       MaxSize: '4'
+      Cooldown: 60
       TargetGroupARNs:
       - Ref: ALBTargetGroup
+      HealthCheckType: EC2
 
   # SSM
   CodeDeployAssociation:
